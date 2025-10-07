@@ -5,7 +5,7 @@ from io import BytesIO
 from PIL import Image
 
 # ============================================================
-# OTROS
+# FUNCIONES DE UTILIDAD
 # ============================================================
 def ensure_rgb(img):
     if img.ndim == 2:
@@ -125,10 +125,11 @@ def filtro_hist_eq_color(img):
     return cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
 
 # ============================================================
-# INTERFAZ STREAMLIT
+#  INTERFAZ STREAMLIT
 # ============================================================
 def run():
     st.header("Capítulo 2: Filtros y Realce de Imágenes 🧩")
+    st.markdown("Explora cómo los distintos **filtros espaciales y realces** modifican la imagen original. 👇")
 
     uploaded = st.file_uploader("Sube una imagen", type=["jpg", "jpeg", "png"], key="cap2")
     if not uploaded:
@@ -157,13 +158,20 @@ def run():
         "Ecualización de histograma (color)": filtro_hist_eq_color,
     }
 
-    filtro_seleccionado = st.selectbox("Selecciona un filtro:", ["Ninguno"] + list(filtros.keys()))
+    st.subheader("🎨 Galería de filtros")
+    st.markdown("Cada filtro genera su propia versión. Haz clic para descargar la imagen procesada.")
 
-    if filtro_seleccionado == "Ninguno":
-        output = img
-    else:
-        output = filtros[filtro_seleccionado](img)
+    keys = list(filtros.keys())
+    for i in range(0, len(keys), 2):  # 2 por fila
+        cols = st.columns(2)
+        for j, col in enumerate(cols):
+            if i + j < len(keys):
+                nombre = keys[i + j]
+                resultado = filtros[nombre](img)
+                mini = cv2.resize(ensure_rgb(resultado), None, fx=0.4, fy=0.4, interpolation=cv2.INTER_AREA)
+                with col:
+                    st.image(mini, caption=nombre, use_container_width=True)
+                    download_button(resultado, nombre.replace(" ", "_"))
 
-    st.image(cv2.cvtColor(output, cv2.COLOR_BGR2RGB), caption=f"Resultado: {filtro_seleccionado}", use_column_width=True)
-    download_button(output, filtro_seleccionado.replace(" ", "_"))
-
+if __name__ == "__main__":
+    run()
