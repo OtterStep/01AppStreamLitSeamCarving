@@ -158,20 +158,17 @@ def run():
         "Ecualización de histograma (color)": filtro_hist_eq_color,
     }
 
-    st.subheader("🎨 Galería de filtros")
+    st.subheader("🎨 Galería de filtros (3 por fila)")
     st.markdown("Cada filtro genera su propia versión. Haz clic para descargar la imagen procesada.")
 
     keys = list(filtros.keys())
-    for i in range(0, len(keys), 2):  # 2 por fila
-        cols = st.columns(2)
+    for i in range(0, len(keys), 3):  # 3 por fila
+        cols = st.columns(3)
         for j, col in enumerate(cols):
             if i + j < len(keys):
                 nombre = keys[i + j]
                 resultado = filtros[nombre](img)
-                mini = cv2.resize(ensure_rgb(resultado), None, fx=0.4, fy=0.4, interpolation=cv2.INTER_AREA)
+                mini = cv2.resize(ensure_rgb(resultado), None, fx=0.3, fy=0.3, interpolation=cv2.INTER_AREA)
                 with col:
                     st.image(mini, caption=nombre, use_container_width=True)
                     download_button(resultado, nombre.replace(" ", "_"))
-
-if __name__ == "__main__":
-    run()
