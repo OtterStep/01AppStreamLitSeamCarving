@@ -1,0 +1,10 @@
+Guarda el código en un archivo app.py.
+
+Instala dependencias:
+
+pip install streamlit scikit-image matplotlib
+
+
+Ejecuta:
+
+streamlit run app.py
