@@ -14,8 +14,8 @@ class ObjectTracker(VideoTransformerBase):
         self.track_window = None
         self.hist = None
         self.paused = False
-        self.apply_filter = False  # nuevo: activar/desactivar filtro
-        self.filter_type = "Normal"  # tipo de filtro
+        self.apply_filter = False
+        self.filter_type = "Normal"
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -48,53 +48,51 @@ class ObjectTracker(VideoTransformerBase):
             track_box, self.track_window = cv2.CamShift(prob, self.track_window, term_crit)
             cv2.ellipse(vis, track_box, (0, 255, 0), 2)
 
-        # Filtro opcional
+        # Filtros
         if self.apply_filter:
             if self.filter_type == "Escala de grises":
                 vis = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY)
                 vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
             elif self.filter_type == "Color resaltado":
                 hsv = cv2.cvtColor(vis, cv2.COLOR_BGR2HSV)
-                mask_color = cv2.inRange(hsv, (35, 100, 100), (85, 255, 255))  # verde
+                mask_color = cv2.inRange(hsv, (35, 100, 100), (85, 255, 255))
                 vis = cv2.bitwise_and(vis, vis, mask=mask_color)
 
         return vis
 
 
 # ============================================================
-# INTERFAZ STREAMLIT
+# FUNCIÓN PRINCIPAL STREAMLIT
 # ============================================================
 def run():
     st.header("🎯 Capítulo 8: Rastreo de Objetos Interactivo (CAMShift)")
     st.markdown("""
-    Este capítulo aplica el algoritmo **CAMShift (Continuously Adaptive Mean Shift)**  
-    para rastrear objetos seleccionados en tiempo real desde tu cámara.  
-    Además, puedes aplicar **filtros visuales en vivo**.
+    Este módulo aplica **CAMShift (Continuously Adaptive Mean Shift)**  
+    para rastrear objetos seleccionados en tiempo real con cámara y filtros.
     """)
 
-    # Estado del rastreador
-    if "tracker" not in st.session_state:
-        st.session_state.tracker = ObjectTracker()
+    # ✅ Inicializar rastreador siempre
+    tracker = st.session_state.get("tracker", ObjectTracker())
+    st.session_state.tracker = tracker  # asegurar persistencia
 
     # Controles de interfaz
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("⏸ Pausar / Reanudar"):
-            st.session_state.tracker.paused = not st.session_state.tracker.paused
+            tracker.paused = not tracker.paused
     with col2:
         if st.button("🔄 Reiniciar"):
-            st.session_state.tracker = ObjectTracker()
+            tracker = ObjectTracker()
+            st.session_state.tracker = tracker
     with col3:
-        st.session_state.tracker.apply_filter = st.checkbox("🎨 Activar filtro en vivo")
+        tracker.apply_filter = st.checkbox("🎨 Activar filtro en vivo", value=tracker.apply_filter)
 
     # Selector de tipo de filtro
-    if st.session_state.tracker.apply_filter:
-        st.session_state.tracker.filter_type = st.radio(
+    if tracker.apply_filter:
+        tracker.filter_type = st.radio(
             "Selecciona un filtro:",
             ["Normal", "Escala de grises", "Color resaltado"],
-            index=["Normal", "Escala de grises", "Color resaltado"].index(
-                st.session_state.tracker.filter_type
-            ),
+            index=["Normal", "Escala de grises", "Color resaltado"].index(tracker.filter_type),
         )
 
     st.info("""
@@ -104,7 +102,7 @@ def run():
     - Usa los botones para pausar, reiniciar o aplicar un filtro.
     """)
 
-    # Muestra el video en vivo
+    # Muestra el video
     webrtc_streamer(
         key="object-tracker",
         mode=WebRtcMode.SENDRECV,
