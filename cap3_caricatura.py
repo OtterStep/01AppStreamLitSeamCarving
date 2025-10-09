@@ -30,48 +30,41 @@ def cartoonize_image(img, ksize=5, sketch_mode=False):
 
 
 # ============================================================
-# Interfaz Streamlit con cámara en vivo
+# Interfaz Streamlit con cámara del navegador
 # ============================================================
 def run():
-    st.header("Capítulo 3: Filtros Cartoon en Video 🎨📸")
+    st.header("Capítulo 3: Filtros Cartoon con Cámara del Navegador 🎨📸")
     st.markdown("""
-    Visualiza el efecto cartoon en **tiempo real** desde tu cámara.  
-    Usa los botones para cambiar el filtro:
+    Visualiza el efecto cartoon aplicando filtros a una **foto capturada desde tu cámara**.  
+    Usa los botones para elegir el tipo de efecto:
     - 🎞 **Normal**: sin efecto  
     - 🖍 **Sketch**: contornos en blanco y negro  
     - 🎨 **Cartoon**: caricatura en color
     """)
 
-    # Iniciar cámara
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        st.error("No se pudo acceder a la cámara.")
-        return
-
     # Selección de filtro
     filter_mode = st.radio("Selecciona el filtro:", ["Normal", "Sketch", "Cartoon"], horizontal=True)
 
-    # Contenedor de imagen
-    frame_container = st.empty()
+    # Componente de cámara
+    img_file = st.camera_input("Captura una foto con tu cámara")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            st.warning("No se pudo leer el fotograma de la cámara.")
-            break
+    if img_file is not None:
+        # Convertir a formato OpenCV
+        image = Image.open(img_file)
+        img_array = np.array(image)
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
         # Aplicar filtro
         if filter_mode == "Sketch":
-            frame = cartoonize_image(frame, sketch_mode=True)
+            processed_img = cartoonize_image(img_bgr, sketch_mode=True)
         elif filter_mode == "Cartoon":
-            frame = cartoonize_image(frame, sketch_mode=False)
+            processed_img = cartoonize_image(img_bgr, sketch_mode=False)
+        else:
+            processed_img = img_bgr
 
-        # Convertir a RGB y mostrar
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_container.image(frame_rgb, channels="RGB", use_container_width=True)
-
-        # Si el usuario presiona el botón, detener cámara
-    cap.release()
-    st.success("Cámara detenida ✅")
+        # Mostrar resultado
+        processed_img_rgb = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
+        st.image(processed_img_rgb, caption="Resultado", use_container_width=True)
 
 
+¿
