@@ -1,75 +1,78 @@
 import streamlit as st
 import cv2
 import numpy as np
-from streamlit.components.v1 import html
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 
-def run():
-    st.header("🎯 Seguimiento de objetos con dos clics en la imagen")
+st.set_page_config(page_title="Seguimiento de Objetos", layout="wide")
 
-    st.markdown("""
-    **Instrucciones:**
-    1️⃣ Captura un cuadro de la cámara.  
-    2️⃣ Haz **dos clics en la imagen** (inicio y fin del rectángulo).  
-    3️⃣ Se inicia el seguimiento del objeto con **CamShift**.
-    """)
+st.title("🎯 Seguimiento de Objetos con CAMShift (interactivo)")
+st.markdown("""
+Selecciona con el mouse el objeto que deseas rastrear en el video.  
+El algoritmo **CAMShift (Continuously Adaptive Mean Shift)** ajustará automáticamente el área de seguimiento.
+""")
 
-    # --- Captura un solo frame de la cámara ---
-    cap = cv2.VideoCapture(0)
-    ret, frame = cap.read()
-    cap.release()
+class ObjectTracker(VideoTransformerBase):
+    def __init__(self):
+        self.drag_start = None
+        self.selection = None
+        self.tracking_state = 0
+        self.track_window = None
+        self.hist = None
+        self.frame_hsv = None
+        self.mask = None
 
-    if not ret:
-        st.error("No se pudo acceder a la cámara.")
-        return
+    def detect_object(self, frame):
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
+        return hsv, mask
 
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    h, w, _ = frame_rgb.shape
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        img = cv2.resize(img, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
+        vis = img.copy()
 
-    # Mostrar la imagen con HTML para capturar clics
-    st.markdown("### 📸 Haz dos clics sobre la imagen:")
-    _, buffer = cv2.imencode(".jpg", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
-    img_base64 = f"data:image/jpeg;base64,{buffer.tobytes().hex()}"
+        hsv, mask = self.detect_object(img)
 
-    # JavaScript para capturar los clics
-    html_code = f"""
-    <div style="position: relative; display: inline-block;">
-      <img id="target" src="data:image/jpeg;base64,{buffer.tobytes().hex()}" width="640">
-      <canvas id="overlay" width="640" height="{int(640*h/w)}"
-              style="position: absolute; top: 0; left: 0;"></canvas>
-    </div>
+        # Si el usuario seleccionó un área, inicializamos el rastreador
+        if self.selection is not None:
+            x0, y0, x1, y1 = self.selection
+            self.track_window = (x0, y0, x1 - x0, y1 - y0)
 
-    <script>
-    const canvas = document.getElementById('overlay');
-    const ctx = canvas.getContext('2d');
-    const img = document.getElementById('target');
-    let clicks = [];
+            hsv_roi = hsv[y0:y1, x0:x1]
+            mask_roi = mask[y0:y1, x0:x1]
+            hist = cv2.calcHist([hsv_roi], [0], mask_roi, [16], [0, 180])
+            cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
+            self.hist = hist
+            self.selection = None
+            self.tracking_state = 1
 
-    canvas.addEventListener('click', (event) => {{
-        const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        clicks.push([x, y]);
-        if (clicks.length === 2) {{
-            ctx.strokeStyle = 'red';
-            ctx.lineWidth = 2;
-            const [x1, y1] = clicks[0];
-            const [x2, y2] = clicks[1];
-            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-            const data = JSON.stringify({{x1, y1, x2, y2}});
-            window.parent.postMessage({{type: 'coords', data: data}}, '*');
-        }}
-    }});
-    </script>
-    """
+        # Si ya está rastreando, aplicar CAMShift
+        if self.tracking_state == 1 and self.hist is not None:
+            prob = cv2.calcBackProject([hsv], [0], self.hist, [0, 180], 1)
+            prob &= mask
+            term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
+            track_box, self.track_window = cv2.CamShift(prob, self.track_window, term_crit)
+            cv2.ellipse(vis, track_box, (0, 255, 0), 2)
 
-    # Escuchar los clics desde JS
-    coords = st.experimental_get_query_params().get("coords")
+        return vis
 
-    html(html_code, height=int(640*h/w) + 10)
+    def mouse_event(self, x, y, event, flags, params):
+        # Detectar arrastre y clics
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.drag_start = (x, y)
+            self.tracking_state = 0
+        elif event == cv2.EVENT_MOUSEMOVE and self.drag_start:
+            xo, yo = self.drag_start
+            x0, y0 = np.minimum((x, y), (xo, yo))
+            x1, y1 = np.maximum((x, y), (xo, yo))
+            self.selection = (x0, y0, x1, y1)
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.drag_start = None
 
-    # Mostrar resultados del clic
-    if coords:
-        st.write("📍 Coordenadas seleccionadas:", coords)
-
-    st.write("⚙️ Próximo paso: usar esas coordenadas para inicializar CamShift.")
-
+# Lanzar el streamer WebRTC
+webrtc_streamer(
+    key="camshift-tracker",
+    mode=WebRtcMode.SENDRECV,
+    video_transformer_factory=ObjectTracker,
+    media_stream_constraints={"video": True, "audio": False},
+)
