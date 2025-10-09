@@ -1,111 +1,46 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import cv2
-import numpy as np
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 
-# ============================================================
-# CLASE PRINCIPAL DE RASTREADOR (CAMShift + filtros)
-# ============================================================
 class ObjectTracker(VideoTransformerBase):
     def __init__(self):
-        self.drag_start = None
-        self.selection = None
-        self.tracking_state = 0
-        self.track_window = None
-        self.hist = None
-        self.paused = False
-        self.apply_filter = False
-        self.filter_type = "Normal"
+        self.tracker = None
+        self.bbox = None
+        self.initialized = False
+        self.filter_type = "None"
 
-    def transform(self, frame):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        if self.paused:
-            return img
+        if self.tracker is not None and self.initialized:
+            success, bbox = self.tracker.update(img)
+            if success:
+                (x, y, w, h) = [int(v) for v in bbox]
+                cv2.ellipse(img, ((x + w // 2), (y + h // 2)), (w // 2, h // 2), 0, 0, 360, (0, 255, 0), 2)
 
-        img = cv2.resize(img, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
-        vis = img.copy()
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
-
-        # Inicialización del seguimiento (si se selecciona un área)
-        if self.selection is not None:
-            x0, y0, x1, y1 = self.selection
-            self.track_window = (x0, y0, x1 - x0, y1 - y0)
-            hsv_roi = hsv[y0:y1, x0:x1]
-            mask_roi = mask[y0:y1, x0:x1]
-            hist = cv2.calcHist([hsv_roi], [0], mask_roi, [16], [0, 180])
-            cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
-            self.hist = hist
-            self.selection = None
-            self.tracking_state = 1
-
-        # Rastreo con CAMShift
-        if self.tracking_state == 1 and self.hist is not None:
-            prob = cv2.calcBackProject([hsv], [0], self.hist, [0, 180], 1)
-            prob &= mask
-            term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
-            track_box, self.track_window = cv2.CamShift(prob, self.track_window, term_crit)
-            cv2.ellipse(vis, track_box, (0, 255, 0), 2)
-
-        # Filtros
-        if self.apply_filter:
-            if self.filter_type == "Escala de grises":
-                vis = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY)
-                vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
-            elif self.filter_type == "Color resaltado":
-                hsv = cv2.cvtColor(vis, cv2.COLOR_BGR2HSV)
-                mask_color = cv2.inRange(hsv, (35, 100, 100), (85, 255, 255))
-                vis = cv2.bitwise_and(vis, vis, mask=mask_color)
-
-        return vis
+        return frame.from_ndarray(img, format="bgr24")
 
 
-# ============================================================
-# FUNCIÓN PRINCIPAL STREAMLIT
-# ============================================================
 def run():
-    st.header("🎯 Capítulo 8: Rastreo de Objetos Interactivo (CAMShift)")
+    st.title("🎯 Seguimiento de Objetos en Video (Object Tracking)")
     st.markdown("""
-    Este módulo aplica **CAMShift (Continuously Adaptive Mean Shift)**  
-    para rastrear objetos seleccionados en tiempo real con cámara y filtros.
-    """)
-
-    # ✅ Inicializar rastreador siempre
-    tracker = st.session_state.get("tracker", ObjectTracker())
-    st.session_state.tracker = tracker  # asegurar persistencia
-
-    # Controles de interfaz
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("⏸ Pausar / Reanudar"):
-            tracker.paused = not tracker.paused
-    with col2:
-        if st.button("🔄 Reiniciar"):
-            tracker = ObjectTracker()
-            st.session_state.tracker = tracker
-    with col3:
-        tracker.apply_filter = st.checkbox("🎨 Activar filtro en vivo", value=tracker.apply_filter)
-
-    # Selector de tipo de filtro
-    if tracker.apply_filter:
-        tracker.filter_type = st.radio(
-            "Selecciona un filtro:",
-            ["Normal", "Escala de grises", "Color resaltado"],
-            index=["Normal", "Escala de grises", "Color resaltado"].index(tracker.filter_type),
-        )
-
-    st.info("""
-    🖱 **Instrucciones:**  
+    🖱 **Instrucciones:**
     - Haz clic y arrastra sobre el cuadro de video para seleccionar el objeto.  
     - El sistema lo seguirá con una elipse verde.  
     - Usa los botones para pausar, reiniciar o aplicar un filtro.
     """)
 
-    # Muestra el video
+    # 🔹 Inicializar el tracker en session_state si no existe
+    if "tracker" not in st.session_state:
+        st.session_state.tracker = ObjectTracker()
+
+    # 🔹 Opciones de filtro
+    filtro = st.selectbox("Selecciona filtro:", ["None", "Gray", "Blur"])
+    st.session_state.tracker.filter_type = filtro
+
+    # 🔹 Iniciar WebRTC
     webrtc_streamer(
         key="object-tracker",
-        mode=WebRtcMode.SENDRECV,
         video_transformer_factory=lambda: st.session_state.tracker,
         media_stream_constraints={"video": True, "audio": False},
     )
