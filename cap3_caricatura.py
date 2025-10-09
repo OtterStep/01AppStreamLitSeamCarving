@@ -66,5 +66,3 @@ def run():
         processed_img_rgb = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
         st.image(processed_img_rgb, caption="Resultado", use_container_width=True)
 
-
-¿
