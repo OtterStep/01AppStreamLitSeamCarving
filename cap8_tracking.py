@@ -10,9 +10,22 @@ def run():
     st.title("🎨 Seguimiento de color con Streamlit + WebRTC")
 
     st.markdown("""
-    Selecciona un color para rastrear en el video en tiempo real.  
+    Selecciona un color para rastrear en tiempo real.  
     El sistema resaltará las áreas que coincidan con el color elegido.
     """)
+
+    # Colores predefinidos
+    COLOR_RANGES = {
+        "Rojo": [(0, 120, 70), (10, 255, 255), (170, 120, 70), (180, 255, 255)],
+        "Verde": [(36, 100, 100), (86, 255, 255)],
+        "Azul": [(94, 80, 2), (126, 255, 255)]
+    }
+
+    COLOR_PREVIEW = {
+        "Rojo": (255, 0, 0),
+        "Verde": (0, 255, 0),
+        "Azul": (0, 0, 255)
+    }
 
     # Selector de color
     color_option = st.selectbox(
@@ -20,20 +33,22 @@ def run():
         ("Rojo", "Verde", "Azul")
     )
 
-    # Umbrales HSV para distintos colores
-    COLOR_RANGES = {
-        "Rojo": [(0, 120, 70), (10, 255, 255), (170, 120, 70), (180, 255, 255)],
-        "Verde": [(36, 100, 100), (86, 255, 255)],
-        "Azul": [(94, 80, 2), (126, 255, 255)]
-    }
+    # Mostrar muestra del color elegido
+    color_preview = np.zeros((50, 150, 3), dtype=np.uint8)
+    bgr_color = COLOR_PREVIEW[color_option]
+    color_preview[:] = bgr_color
+    st.image(color_preview, channels="BGR", caption=f"Muestra de color: {color_option}")
 
+    # Clase procesadora de video
     class ColorTracker(VideoTransformerBase):
         def __init__(self):
             self.color = color_option
 
         def transform(self, frame):
-            img = frame.to_ndarray(format="bgr24")
+            # Permitir que el color se actualice dinámicamente
+            self.color = st.session_state.get("color_actual", self.color)
 
+            img = frame.to_ndarray(format="bgr24")
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
             color = self.color
 
@@ -50,17 +65,22 @@ def run():
             mask = cv2.erode(mask, None, iterations=2)
             mask = cv2.dilate(mask, None, iterations=2)
 
-            # Encuentra los contornos del color
+            # Contornos del color
             contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             for contour in contours:
                 area = cv2.contourArea(contour)
                 if area > 1000:
                     (x, y, w, h) = cv2.boundingRect(contour)
                     cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(img, color, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+                    cv2.putText(img, color, (x, y-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
 
             return img
 
+    # Guardar selección actual para que el procesador la lea dinámicamente
+    st.session_state["color_actual"] = color_option
+
+    # Inicializar cámara
     webrtc_streamer(
         key="color-tracker",
         video_processor_factory=ColorTracker,
