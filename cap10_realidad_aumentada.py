@@ -133,31 +133,41 @@ class VideoProcessor(VideoProcessorBase):
         self.pose_tracker.add_target(self.frame, rect)
 
 
-# --- Interfaz Streamlit ---
-st.title("🧠 AR Surface Tracker - Detección de Superficie Plana")
 
-webrtc_ctx = webrtc_streamer(
-    key="tracker",
-    video_processor_factory=VideoProcessor,
-    rtc_configuration=RTCConfiguration(
-        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-    ),
-    media_stream_constraints={"video": True, "audio": False},
-)
+import cv2
+import numpy as np
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+from collections import namedtuple
+import av
 
-if webrtc_ctx.video_processor:
-    vp = webrtc_ctx.video_processor
-    st.markdown("### 🎨 Selección de superficie")
-    x0 = st.slider("x0", 0, 640, 100)
-    y0 = st.slider("y0", 0, 480, 100)
-    x1 = st.slider("x1", 0, 640, 200)
-    y1 = st.slider("y1", 0, 480, 200)
+# --- Tus clases PoseEstimator y VideoProcessor aquí (idénticas) ---
 
-    if st.button("📍 Seleccionar superficie"):
-        vp.set_roi(x0, y0, x1, y1)
-        st.success("Superficie añadida para seguimiento.")
+def run():
+    st.title("🧠 AR Surface Tracker - Detección de Superficie Plana")
 
-    if st.button("❌ Limpiar objetivos"):
-        vp.pose_tracker.clear_targets()
-        vp.rect = None
-        st.info("Superficies limpiadas.")
+    webrtc_ctx = webrtc_streamer(
+        key="tracker",
+        video_processor_factory=VideoProcessor,
+        rtc_configuration=RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        ),
+        media_stream_constraints={"video": True, "audio": False},
+    )
+
+    if webrtc_ctx.video_processor:
+        vp = webrtc_ctx.video_processor
+        st.markdown("### 🎨 Selección de superficie")
+        x0 = st.slider("x0", 0, 640, 100)
+        y0 = st.slider("y0", 0, 480, 100)
+        x1 = st.slider("x1", 0, 640, 200)
+        y1 = st.slider("y1", 0, 480, 200)
+
+        if st.button("📍 Seleccionar superficie"):
+            vp.set_roi(x0, y0, x1, y1)
+            st.success("Superficie añadida para seguimiento.")
+
+        if st.button("❌ Limpiar objetivos"):
+            vp.pose_tracker.clear_targets()
+            vp.rect = None
+            st.info("Superficies limpiadas.")
