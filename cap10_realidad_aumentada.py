@@ -137,13 +137,124 @@ class TrackerColorStream(VideoTransformerBase):
 # ------------------------------
 #   Función pública para Streamlit
 # ------------------------------
-def run(color='green'):
-    """Ejecuta el rastreador de color con proyección 3D en Streamlit."""
-    webrtc_streamer(
-        key="color-tracker",
-        video_transformer_factory=lambda: TrackerColorStream(color),
+import cv2
+import numpy as np
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+import av
+
+# ======================
+# 1. Funciones auxiliares
+# ======================
+def get_color_range(color_name):
+    """Devuelve los rangos HSV para un color dado"""
+    color_ranges = {
+        "rojo": [(np.array([0, 120, 70]), np.array([10, 255, 255])),
+                 (np.array([170, 120, 70]), np.array([180, 255, 255]))],
+        "verde": [(np.array([35, 60, 60]), np.array([85, 255, 255]))],
+        "azul": [(np.array([100, 150, 0]), np.array([140, 255, 255]))],
+        "amarillo": [(np.array([20, 100, 100]), np.array([35, 255, 255]))],
+    }
+    return color_ranges.get(color_name, [])
+
+
+# ======================
+# 2. Procesador de video
+# ======================
+class ColorPlaneTracker(VideoProcessorBase):
+    def __init__(self):
+        self.selected_colors = ["verde"]
+
+    def set_colors(self, colors):
+        self.selected_colors = colors
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        img = cv2.flip(img, 1)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        mask_total = np.zeros(hsv.shape[:2], dtype=np.uint8)
+
+        for color in self.selected_colors:
+            for (lower, upper) in get_color_range(color):
+                mask = cv2.inRange(hsv, lower, upper)
+                mask_total = cv2.bitwise_or(mask_total, mask)
+
+        contours, _ = cv2.findContours(mask_total, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if contours:
+            contour = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(contour) > 1000:
+                # Polígono aproximado (plano detectado)
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                cv2.drawContours(img, [approx], -1, (0, 255, 0), 2)
+
+                # Centro del contorno
+                M = cv2.moments(contour)
+                if M["m00"] > 0:
+                    cx, cy = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+
+                    # Proyección de pirámide 3D
+                    h, w = img.shape[:2]
+                    K = np.float64([[w, 0, 0.5 * (w - 1)],
+                                    [0, w, 0.5 * (h - 1)],
+                                    [0, 0, 1.0]])
+                    dist_coef = np.zeros(4)
+
+                    side = 100
+                    quad_3d = np.float32([
+                        [cx - side, cy - side, 0],
+                        [cx + side, cy - side, 0],
+                        [cx + side, cy + side, 0],
+                        [cx - side, cy + side, 0],
+                        [cx, cy, -side * 2]
+                    ])
+
+                    rvec = np.zeros((3, 1))
+                    tvec = np.zeros((3, 1))
+                    verts = cv2.projectPoints(quad_3d, rvec, tvec, K, dist_coef)[0].reshape(-1, 2)
+                    verts = np.int32(verts)
+
+                    # Dibujar pirámide
+                    cv2.drawContours(img, [verts[:4]], -1, (0, 255, 0), -3)
+                    for i in range(4):
+                        cv2.line(img, tuple(verts[i]), tuple(verts[4]), (255, 255, 0), 2)
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+# ======================
+# 3. Interfaz Streamlit
+# ======================
+def run():
+    st.title("🎨 Realidad Aumentada con Selector de Color")
+    st.markdown(
+        "Selecciona uno o varios colores. "
+        "Se detectará la superficie más grande con ese color y se proyectará una pirámide 3D sobre ella."
+    )
+
+    colors = st.multiselect(
+        "Selecciona colores a rastrear:",
+        ["rojo", "verde", "azul", "amarillo"],
+        default=["verde"],
+    )
+
+    ctx = webrtc_streamer(
+        key="color-plane-tracker",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=ColorPlaneTracker,
+        async_processing=True,
         media_stream_constraints={"video": True, "audio": False},
     )
+
+    if ctx.video_processor:
+        ctx.video_processor.set_colors(colors)
+
+
+if __name__ == "__main__":
+    run()
+
 
 import cv2
 import numpy as np
