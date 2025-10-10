@@ -1,173 +1,119 @@
 import cv2
 import numpy as np
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from collections import namedtuple
-
-# --- Clase PoseEstimator (igual que tu versión base) ---
-class PoseEstimator:
-    def __init__(self):
-        flann_params = dict(algorithm=6, table_number=6, key_size=12, multi_probe_level=1)
-        self.min_matches = 10
-        self.cur_target = namedtuple('Current', 'image, rect, keypoints, descriptors, data')
-        self.tracked_target = namedtuple('Tracked', 'target, points_prev, points_cur, H, quad')
-
-        self.feature_detector = cv2.ORB_create(nfeatures=1000)
-        self.feature_matcher = cv2.FlannBasedMatcher(flann_params, {})
-        self.tracking_targets = []
-
-    def add_target(self, image, rect, data=None):
-        x0, y0, x1, y1 = rect
-        keypoints, descriptors = [], []
-        kp, desc = self.detect_features(image)
-        for k, d in zip(kp, desc):
-            x, y = k.pt
-            if x0 <= x <= x1 and y0 <= y <= y1:
-                keypoints.append(k)
-                descriptors.append(d)
-
-        if len(descriptors) == 0:
-            st.warning("⚠️ No se encontraron características en esa región.")
-            return
-
-        descriptors = np.array(descriptors, dtype='uint8')
-        self.feature_matcher.add([descriptors])
-        target = self.cur_target(image=image, rect=rect, keypoints=keypoints, descriptors=descriptors, data=data)
-        self.tracking_targets.append(target)
-
-    def track_target(self, frame):
-        kp, desc = self.detect_features(frame)
-        if len(kp) < self.min_matches or desc is None:
-            return []
-
-        try:
-            matches_all = self.feature_matcher.knnMatch(desc, k=2)
-        except:
-            return []
-
-        good_matches = [m[0] for m in matches_all if len(m) == 2 and m[0].distance < m[1].distance * 0.75]
-        if len(good_matches) < self.min_matches:
-            return []
-
-        matches_by_index = [[] for _ in range(len(self.tracking_targets))]
-        for m in good_matches:
-            matches_by_index[m.imgIdx].append(m)
-
-        tracked = []
-        for idx, matches in enumerate(matches_by_index):
-            if len(matches) < self.min_matches:
-                continue
-
-            target = self.tracking_targets[idx]
-            pts_prev = [target.keypoints[m.trainIdx].pt for m in matches]
-            pts_cur = [kp[m.queryIdx].pt for m in matches]
-            pts_prev, pts_cur = np.float32(pts_prev), np.float32(pts_cur)
-
-            H, status = cv2.findHomography(pts_prev, pts_cur, cv2.RANSAC, 3.0)
-            if H is None:
-                continue
-            status = status.ravel() != 0
-
-            if status.sum() < self.min_matches:
-                continue
-
-            pts_prev, pts_cur = pts_prev[status], pts_cur[status]
-            x0, y0, x1, y1 = target.rect
-            quad = np.float32([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-            quad = cv2.perspectiveTransform(quad.reshape(1, -1, 2), H).reshape(-1, 2)
-
-            track = self.tracked_target(target=target, points_prev=pts_prev, points_cur=pts_cur, H=H, quad=quad)
-            tracked.append(track)
-        return tracked
-
-    def detect_features(self, frame):
-        kp, desc = self.feature_detector.detectAndCompute(frame, None)
-        if desc is None:
-            desc = []
-        return kp, desc
-
-    def clear_targets(self):
-        self.feature_matcher.clear()
-        self.tracking_targets = []
-
-
-# --- Procesador de video para Streamlit WebRTC ---
-class VideoProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.pose_tracker = PoseEstimator()
-        self.rect = None
-        self.drawing = False
-        self.start_point = None
-        self.select_mode = False
-        self.frame = None
-
-    def toggle_select_mode(self):
-        self.select_mode = not self.select_mode
-
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        img_display = img.copy()
-
-        # Dibuja rectángulo de selección manual (si está activado)
-        if self.select_mode and self.drawing and self.start_point:
-            x0, y0 = self.start_point
-            x1, y1 = self.end_point
-            cv2.rectangle(img_display, (x0, y0), (x1, y1), (0, 255, 0), 2)
-
-        # Si hay rect y objetivo, hacer tracking
-        if self.rect is not None:
-            tracked = self.pose_tracker.track_target(img)
-            for t in tracked:
-                cv2.polylines(img_display, [np.int32(t.quad)], True, (0, 255, 0), 2)
-                for (x, y) in np.int32(t.points_cur):
-                    cv2.circle(img_display, (x, y), 2, (0, 0, 255), -1)
-
-        self.frame = img
-        return av.VideoFrame.from_ndarray(img_display, format="bgr24")
-
-    def set_roi(self, x0, y0, x1, y1):
-        if self.frame is None:
-            return
-        rect = (x0, y0, x1, y1)
-        self.rect = rect
-        self.pose_tracker.add_target(self.frame, rect)
-
-
-
-import cv2
-import numpy as np
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from collections import namedtuple
 import av
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
-# --- Tus clases PoseEstimator y VideoProcessor aquí (idénticas) ---
+st.set_page_config(page_title="Pirámide AR por color 🎨", page_icon="🧱")
 
 def run():
-    st.title("🧠 AR Surface Tracker - Detección de Superficie Plana")
+    st.title("🧱 Detección de color con pirámide 3D (Streamlit + OpenCV + WebRTC)")
 
-    webrtc_ctx = webrtc_streamer(
-        key="tracker",
-        video_processor_factory=VideoProcessor,
-        rtc_configuration=RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-        ),
+    st.markdown("""
+    Este demo rastrea una **superficie de color específica** en la cámara y proyecta una **pirámide virtual** sobre ella.  
+    Ajusta el color objetivo y el rango HSV hasta obtener la superficie deseada.
+    """)
+
+    # --- Controles de color
+    st.sidebar.header("🎛️ Control de color (HSV)")
+    h = st.sidebar.slider("Tono (H)", 0, 179, 60)
+    s = st.sidebar.slider("Saturación mínima (S)", 0, 255, 100)
+    v = st.sidebar.slider("Brillo mínimo (V)", 0, 255, 100)
+    rango_h = st.sidebar.slider("Rango de H ±", 0, 50, 20)
+    color_bgr = cv2.cvtColor(np.uint8([[[h, 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0]
+    st.sidebar.markdown(f"Color aproximado: <div style='width:50px;height:25px;background-color:rgb({color_bgr[2]},{color_bgr[1]},{color_bgr[0]});'></div>", unsafe_allow_html=True)
+
+    # Clase procesadora del video
+    class ColorPyramid(VideoTransformerBase):
+        def transform(self, frame):
+            img = frame.to_ndarray(format="bgr24")
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+            # --- Crear máscara del color seleccionado
+            lower = np.array([max(0, h - rango_h), s, v])
+            upper = np.array([min(179, h + rango_h), 255, 255])
+            mask = cv2.inRange(hsv, lower, upper)
+
+            # --- Filtrar ruido
+            mask = cv2.erode(mask, None, iterations=2)
+            mask = cv2.dilate(mask, None, iterations=2)
+
+            # --- Buscar contornos grandes
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                c = max(contours, key=cv2.contourArea)
+                area = cv2.contourArea(c)
+
+                if area > 3000:  # evitar ruido
+                    rect = cv2.minAreaRect(c)
+                    box = cv2.boxPoints(rect)
+                    box = np.int32(box)
+                    cv2.drawContours(img, [box], 0, (0, 255, 0), 2)
+
+                    # --- Proyección de la pirámide 3D
+                    h_img, w_img = img.shape[:2]
+                    K = np.float64([
+                        [w_img, 0, w_img / 2],
+                        [0, w_img, h_img / 2],
+                        [0, 0, 1]
+                    ])
+                    dist_coef = np.zeros(4)
+
+                    # Coordenadas base (plano)
+                    obj_pts = np.float32([
+                        [0, 0, 0],
+                        [1, 0, 0],
+                        [1, 1, 0],
+                        [0, 1, 0]
+                    ])
+                    # Coordenadas de la imagen (puntos detectados)
+                    img_pts = np.float32(box)
+
+                    # Resolver pose
+                    success, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, K, dist_coef)
+                    if success:
+                        # Pirámide: 4 base + 1 vértice
+                        pyramid = np.float32([
+                            [0, 0, 0],
+                            [1, 0, 0],
+                            [1, 1, 0],
+                            [0, 1, 0],
+                            [0.5, 0.5, -0.8]
+                        ])
+                        proj, _ = cv2.projectPoints(pyramid, rvec, tvec, K, dist_coef)
+                        proj = np.int32(proj).reshape(-1, 2)
+
+                        # Base
+                        cv2.drawContours(img, [proj[:4]], -1, (0, 255, 0), -3)
+
+                        # Caras
+                        faces = [
+                            [proj[0], proj[1], proj[4]],
+                            [proj[1], proj[2], proj[4]],
+                            [proj[2], proj[3], proj[4]],
+                            [proj[3], proj[0], proj[4]],
+                        ]
+                        colors = [(255, 0, 0), (0, 0, 255), (255, 255, 0), (0, 255, 255)]
+                        for face, color in zip(faces, colors):
+                            cv2.drawContours(img, [np.int32(face)], -1, color, -3)
+
+                        # Líneas de aristas
+                        for p in proj:
+                            cv2.circle(img, tuple(p), 3, (255, 255, 255), -1)
+
+                        for (i, j) in [(0, 1), (1, 2), (2, 3), (3, 0),
+                                       (0, 4), (1, 4), (2, 4), (3, 4)]:
+                            cv2.line(img, tuple(proj[i]), tuple(proj[j]), (0, 0, 0), 2)
+
+            return img
+
+    # Iniciar cámara
+    webrtc_streamer(
+        key="pyramid-color-tracker",
+        video_processor_factory=ColorPyramid,
         media_stream_constraints={"video": True, "audio": False},
     )
 
-    if webrtc_ctx.video_processor:
-        vp = webrtc_ctx.video_processor
-        st.markdown("### 🎨 Selección de superficie")
-        x0 = st.slider("x0", 0, 640, 100)
-        y0 = st.slider("y0", 0, 480, 100)
-        x1 = st.slider("x1", 0, 640, 200)
-        y1 = st.slider("y1", 0, 480, 200)
-
-        if st.button("📍 Seleccionar superficie"):
-            vp.set_roi(x0, y0, x1, y1)
-            st.success("Superficie añadida para seguimiento.")
-
-        if st.button("❌ Limpiar objetivos"):
-            vp.pose_tracker.clear_targets()
-            vp.rect = None
-            st.info("Superficies limpiadas.")
+# Llamar a la app
+if __name__ == "__main__":
+    run()
