@@ -10,7 +10,10 @@ st.set_page_config(page_title="Pirámide sobre superficie blanca 🤍", page_ico
 def run():
     st.title("🧱 Realidad aumentada sobre superficie blanca (Pirámide 3D)")
     st.markdown(
-        "Coloca una hoja o fondo blanco frente a la cámara. La pirámide aparecerá sobre la superficie blanca detectada."
+        "Se hizo modificaciones al ejercicio de realidad virtual para mostrar una pirámide 3D en una superficie." \
+        "Y se utilizó los conocimientos del capítulo 8 :D" \
+        "Coloca una hoja o fondo blanco frente a la cámara. La pirámide aparecerá sobre la superficie blanca detectada." \
+        " Usa los controles de la barra lateral para calibrar la detección." \
     )
 
     # --- Controles de calibración ---
@@ -155,5 +158,3 @@ def run():
     )
 
 
-if __name__ == "__main__":
-    run()
